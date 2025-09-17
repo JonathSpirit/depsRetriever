@@ -7,7 +7,7 @@ Original :
 - From commit : 8b8beff9aa761c4e62d5368414fb24fc980ab257
 
 Modified/Altered :
-- Author : Copyright 2024 Guillaume Guillet
+- Author : Copyright 2025 Guillaume Guillet
 - License : Apache License Version 2.0
 
 ## Description

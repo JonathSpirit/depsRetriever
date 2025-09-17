@@ -4,7 +4,7 @@
         Apache License Version 2.0
     
     Modified/Altered :
-        Copyright 2024 Guillaume Guillet
+        Copyright 2025 Guillaume Guillet
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
