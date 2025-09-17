@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <optional>
 #include <filesystem>
+#include <set>
 #include "CLI11.hpp"
 
 std::optional<std::wstring> RetrieveModuleFullPath(std::wstring const& moduleName)
@@ -61,7 +62,7 @@ std::optional<std::wstring> RetrieveModuleFullPath(std::wstring const& moduleNam
     return std::nullopt;
 }
 
-std::optional<std::size_t> RetrieveDependencies(HANDLE fileMap, DWORD fileSize, std::vector<std::wstring>& dependencies)
+std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DWORD fileSize)
 {
     LPVOID mapView = MapViewOfFile(fileMap, FILE_MAP_READ, 0, 0, fileSize);
     if (mapView == nullptr)
@@ -90,7 +91,7 @@ std::optional<std::size_t> RetrieveDependencies(HANDLE fileMap, DWORD fileSize, 
                                                                                   ntHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress,
                                                                                   0);
 
-    std::size_t count = 0;
+    std::vector<std::wstring> outputs;
 
     while (pImportDesc && pImportDesc->Name)
     {
@@ -107,21 +108,20 @@ std::optional<std::size_t> RetrieveDependencies(HANDLE fileMap, DWORD fileSize, 
         //Lets discover the full filename
         currentModuleName = RetrieveModuleFullPath(currentModuleName).value_or(currentModuleName);
 
-        if (std::ranges::find(dependencies, currentModuleName) == dependencies.end())
+        if (std::ranges::find(outputs, currentModuleName) == outputs.end())
         {
-            dependencies.push_back(std::move(currentModuleName));
-            ++count;
+            outputs.push_back(std::move(currentModuleName));
         }
 
         ++pImportDesc;
     }
 
     UnmapViewOfFile(mapView);
-    return count;
+    return outputs;
 }
 
 std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& filepath, 
-                                                std::vector<std::wstring>& dependencies,
+                                                std::set<std::wstring>& dependencies,
                                                 bool recursive)
 {
     HANDLE hFile = CreateFileW(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -145,9 +145,8 @@ std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& fil
     }
 
     std::size_t totalCount = 0;
-    std::vector<std::wstring> nextDependencies;
-    auto const count = RetrieveDependencies(hFileMap, filesize, nextDependencies);
-    if (!count)
+    auto nextDependencies = RetrieveDependencies(hFileMap, filesize);
+    if (!nextDependencies)
     {
         CloseHandle(hFileMap);
         CloseHandle(hFile);
@@ -158,22 +157,22 @@ std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& fil
     CloseHandle(hFileMap);
     CloseHandle(hFile);
 
-    std::wcout << filepath.filename() << L" as " << count.value() << L" dependencies\n";
+    std::wcout << filepath.filename() << L" as " << nextDependencies->size() << L" dependencies\n";
 
     if (!recursive)
     {
-        dependencies.insert(dependencies.end(), nextDependencies.begin(), nextDependencies.end());
-        return count.value();
+        dependencies.insert(nextDependencies->begin(), nextDependencies->end());
+        return dependencies.size();
     }
 
-    for (auto const& nextDependency : nextDependencies)
+    for (auto& nextDependency : nextDependencies.value())
     {
-        if (std::ranges::find(dependencies, nextDependency) == dependencies.end())
+        if (!dependencies.contains(nextDependency))
         {
-            dependencies.push_back(std::move(nextDependency));
+            dependencies.insert(nextDependency);
             ++totalCount;
 
-            totalCount += RetrieveDependencies(dependencies.back(), dependencies, true).value_or(0);
+            totalCount += RetrieveDependencies(std::move(nextDependency), dependencies, true).value_or(0);
         }
     }
 
@@ -204,7 +203,7 @@ int main(int argc, char* argv[])
 
     std::wcout << L"Checking file: " << filepath.wstring() << L'\n';
 
-    std::vector<std::wstring> dependencies;
+    std::set<std::wstring> dependencies;
     auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive);
     if (!result)
     {
@@ -235,13 +234,13 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (result.value() == 0)
+    if (dependencies.empty())
     {
         std::wcout << L"no dependencies found !\n";
     }
     else
     {
-        std::wcout << L"total dependencies found : " << result.value() << '\n';
+        std::wcout << L"total dependencies found : " << dependencies.size() << '\n';
     }
 
     return 0;
