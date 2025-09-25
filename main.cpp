@@ -62,7 +62,7 @@ std::optional<std::wstring> RetrieveModuleFullPath(std::wstring const& moduleNam
     return std::nullopt;
 }
 
-std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DWORD fileSize)
+std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DWORD fileSize, bool ignoreInvalid)
 {
     LPVOID mapView = MapViewOfFile(fileMap, FILE_MAP_READ, 0, 0, fileSize);
     if (mapView == nullptr)
@@ -106,7 +106,13 @@ std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DW
         std::wstring currentModuleName = converter.from_bytes(szCurrMod);
 
         //Lets discover the full filename
-        currentModuleName = RetrieveModuleFullPath(currentModuleName).value_or(currentModuleName);
+        auto fullModulePath = RetrieveModuleFullPath(currentModuleName);
+        if (ignoreInvalid && !fullModulePath)
+        {
+            std::wcerr << L"Can't find full path for " << currentModuleName << L", ignoring it\n";
+            continue;
+        }
+        currentModuleName = fullModulePath.value_or(currentModuleName);
 
         if (std::ranges::find(outputs, currentModuleName) == outputs.end())
         {
@@ -122,7 +128,8 @@ std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DW
 
 std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& filepath, 
                                                 std::set<std::wstring>& dependencies,
-                                                bool recursive)
+                                                bool recursive,
+                                                bool ignoreInvalid)
 {
     HANDLE hFile = CreateFileW(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
@@ -145,7 +152,7 @@ std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& fil
     }
 
     std::size_t totalCount = 0;
-    auto nextDependencies = RetrieveDependencies(hFileMap, filesize);
+    auto nextDependencies = RetrieveDependencies(hFileMap, filesize, ignoreInvalid);
     if (!nextDependencies)
     {
         CloseHandle(hFileMap);
@@ -172,7 +179,7 @@ std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& fil
             dependencies.insert(nextDependency);
             ++totalCount;
 
-            totalCount += RetrieveDependencies(std::move(nextDependency), dependencies, true).value_or(0);
+            totalCount += RetrieveDependencies(std::move(nextDependency), dependencies, true, ignoreInvalid).value_or(0);
         }
     }
 
@@ -190,10 +197,13 @@ int main(int argc, char* argv[])
         ->check(CLI::ExistingFile);
     
     bool recursive = false;
-    app.add_flag("-r,--recursive", recursive);
+    app.add_flag("-r,--recursive", recursive, "Recursively check dependencies");
 
     bool ignoreWindows = false;
-    app.add_flag("--ignoreWindows", ignoreWindows);
+    app.add_flag("--ignoreWindows", ignoreWindows, "Ignore dependencies in C:\\Windows folder");
+
+    bool ignoreInvalid = false;
+    app.add_flag("--ignoreInvalid", ignoreInvalid, "Ignore dependencies that doesn't resolve to a full path");
 
     std::filesystem::path copyDirPath;
     app.add_option("-c,--copy", copyDirPath, "Copy all dlls into the directory")
@@ -204,7 +214,7 @@ int main(int argc, char* argv[])
     std::wcout << L"Checking file: " << filepath.wstring() << L'\n';
 
     std::set<std::wstring> dependencies;
-    auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive);
+    auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive, ignoreInvalid);
     if (!result)
     {
         std::wcerr << L"something went wrong\n";
@@ -224,9 +234,15 @@ int main(int argc, char* argv[])
             std::error_code err;
             bool copyResult = std::filesystem::copy_file(dllPath, 
                 copyDirPath / std::filesystem::path{dllPath}.filename(),
-                std::filesystem::copy_options::overwrite_existing, err);
+                std::filesystem::copy_options::none, err);
             if (!copyResult)
             {
+                if (err == std::errc::file_exists)
+                {
+                    std::wcerr << L"file " << dllPath << L" already exists in " << copyDirPath << L", skipping it\n";
+                    continue;
+                }
+
                 std::wcerr << L"can't copy " << dllPath << L" to " << copyDirPath << L'\n';
                 std::cerr << err.message() << '\n';
                 return 1;
