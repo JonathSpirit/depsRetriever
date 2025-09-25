@@ -62,7 +62,7 @@ std::optional<std::wstring> RetrieveModuleFullPath(std::wstring const& moduleNam
     return std::nullopt;
 }
 
-std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DWORD fileSize, bool ignoreInvalid)
+std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DWORD fileSize)
 {
     LPVOID mapView = MapViewOfFile(fileMap, FILE_MAP_READ, 0, 0, fileSize);
     if (mapView == nullptr)
@@ -107,7 +107,7 @@ std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DW
 
         //Lets discover the full filename
         auto fullModulePath = RetrieveModuleFullPath(currentModuleName);
-        if (ignoreInvalid && !fullModulePath)
+        if (!fullModulePath)
         {
             std::wcerr << L"Can't find full path for " << currentModuleName << L", ignoring it\n";
             continue;
@@ -128,8 +128,7 @@ std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DW
 
 std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& filepath, 
                                                 std::set<std::wstring>& dependencies,
-                                                bool recursive,
-                                                bool ignoreInvalid)
+                                                bool recursive)
 {
     HANDLE hFile = CreateFileW(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
@@ -152,7 +151,7 @@ std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& fil
     }
 
     std::size_t totalCount = 0;
-    auto nextDependencies = RetrieveDependencies(hFileMap, filesize, ignoreInvalid);
+    auto nextDependencies = RetrieveDependencies(hFileMap, filesize);
     if (!nextDependencies)
     {
         CloseHandle(hFileMap);
@@ -179,7 +178,7 @@ std::optional<std::size_t> RetrieveDependencies(std::filesystem::path const& fil
             dependencies.insert(nextDependency);
             ++totalCount;
 
-            totalCount += RetrieveDependencies(std::move(nextDependency), dependencies, true, ignoreInvalid).value_or(0);
+            totalCount += RetrieveDependencies(std::move(nextDependency), dependencies, true).value_or(0);
         }
     }
 
@@ -214,7 +213,7 @@ int main(int argc, char* argv[])
     std::wcout << L"Checking file: " << filepath.wstring() << L'\n';
 
     std::set<std::wstring> dependencies;
-    auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive, ignoreInvalid);
+    auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive);
     if (!result)
     {
         std::wcerr << L"something went wrong\n";
@@ -240,6 +239,12 @@ int main(int argc, char* argv[])
                 if (err == std::errc::file_exists)
                 {
                     std::wcerr << L"file " << dllPath << L" already exists in " << copyDirPath << L", skipping it\n";
+                    continue;
+                }
+
+                if (ignoreInvalid && err == std::errc::no_such_file_or_directory)
+                {
+                    std::wcerr << L"file " << dllPath << L" doesn't exists, skipping it\n";
                     continue;
                 }
 
