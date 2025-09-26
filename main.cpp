@@ -190,9 +190,9 @@ int main(int argc, char* argv[])
     argv = app.ensure_utf8(argv);
 
     std::filesystem::path filepath;
-    app.add_option("-f,--file", filepath, "Executable file")
+    app.add_option("-i,--in", filepath, "Executable file or folder")
         ->required()
-        ->check(CLI::ExistingFile);
+        ->check(CLI::ExistingPath);
     
     bool recursive = false;
     app.add_flag("-r,--recursive", recursive, "Recursively check dependencies");
@@ -209,13 +209,45 @@ int main(int argc, char* argv[])
 
     CLI11_PARSE(app, argc, argv);
 
-    std::wcout << L"Checking file: " << filepath.wstring() << L'\n';
-
     std::set<std::wstring> dependencies;
-    auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive);
-    if (!result)
+    if (std::filesystem::is_directory(filepath))
     {
-        std::wcerr << L"something went wrong\n";
+        std::wcout << L"Checking folder: " << filepath.wstring() << L'\n';
+        for (auto const& entry : std::filesystem::directory_iterator{filepath})
+        {
+            if (!entry.is_regular_file())
+            {
+                continue;
+            }
+
+            if (entry.path().extension() != ".exe" && entry.path().extension() != ".dll")
+            {
+                continue;
+            }
+
+            std::wcout << L"Checking file: " << entry.path().wstring() << L'\n';
+
+            auto const result = RetrieveDependencies(entry.path(), dependencies, recursive);
+            if (!result)
+            {
+                std::wcerr << L"something went wrong\n";
+                return 1;
+            }
+        }
+    }
+    else if (std::filesystem::is_regular_file(filepath))
+    {
+        std::wcout << L"Checking file: " << filepath.wstring() << L'\n';
+        auto const result = RetrieveDependencies(filepath.wstring(), dependencies, recursive);
+        if (!result)
+        {
+            std::wcerr << L"something went wrong\n";
+            return 1;
+        }
+    }
+    else
+    {
+        std::wcerr << L"Invalid path\n";
         return 1;
     }
 
