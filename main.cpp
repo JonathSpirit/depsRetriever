@@ -109,8 +109,7 @@ std::optional<std::vector<std::wstring>> RetrieveDependencies(HANDLE fileMap, DW
         auto fullModulePath = RetrieveModuleFullPath(currentModuleName);
         if (!fullModulePath)
         {
-            std::wcerr << L"Can't find full path for " << currentModuleName << L", ignoring it\n";
-            continue;
+            std::wcerr << L"Can't find full path for " << currentModuleName << L"\n";
         }
         currentModuleName = fullModulePath.value_or(currentModuleName);
 
